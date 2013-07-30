@@ -121,7 +121,7 @@ PRODUCT_PACKAGES += \
 	camera.exDroid \
 	sensors.exDroid \
 	hwcomposer.exDroid \
-	lights.sun4i \
+	lights.exDroid \
 	libaudioutils \
 	chat \
 	u3gmonitor \
