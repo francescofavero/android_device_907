@@ -1,8 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <manifest>
  <remote  name="github" fetch="git://github.com/"/>
- <remove-project name="CyanogenMod/android_bootable_recovery"/>
- <project remote="github" revision="twrp2.5" name="TeamWin/Team-Win-Recovery-Project" path="bootable/recovery" />
+ <remove-project name="CyanogenMod/android_system_vold"/>
+ <remove-project name="CyanogenMod/android_hardware_libhardware_legacy"/>
+ <remove-project name="CyanogenMod/android_hardware_libhardware"/>
+ <remove-project name="CyanogenMod/android_frameworks_native"/>
  <project remote="github" revision="sunxi-3.0" name="linux-sunxi/linux-sunxi" path="kernel/softwinner/907" />
  <project remote="github" revision="jb2" name="francescofavero/android_device_907" path="device/softwinner/907" />
+ <project remote="github" revision="cm-10.1" name="ugers/android_system_vold" path="system/vold" />
+ <project remote="github" revision="cm-10.1" name="ugers/android_hardware_libhardware_legacy" path="hardware/libhardware_legacy" />
+ <project remote="github" revision="cm-10.1" name="ugers/android_hardware_libhardware" path="hardware/libhardware" />
+ <project remote="github" revision="cm-10.1" name="ugers/android_frameworks_native" path="frameworks/native" />
 </manifest>

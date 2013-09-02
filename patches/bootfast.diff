@@ -1,0 +1,153 @@
+diff --git a/system/core/init/property_service.c b/system/core/init/property_service.c
+--- a/system/core/init/property_service.c
++++ b/system/core/init/property_service.c
+@@ -70,6 +70,7 @@ struct {
+     { "net.gprs.",        AID_RADIO,    0 },
+     { "net.ppp",          AID_RADIO,    0 },
+     { "net.qmi",          AID_RADIO,    0 },
++    { "ril.pcui",         AID_RADIO,    0 },
+     { "net.lte",          AID_RADIO,    0 },
+     { "net.cdma",         AID_RADIO,    0 },
+     { "ril.",             AID_RADIO,    0 },
+diff --git a/system/core/libsuspend/autosuspend.c b/system/core/libsuspend/autosuspend.c
+--- a/system/core/libsuspend/autosuspend.c
++++ b/system/core/libsuspend/autosuspend.c
+@@ -107,3 +107,27 @@ int autosuspend_disable(void)
+     autosuspend_enabled = false;
+     return 0;
+ }
++
++int autosuspend_bootfast(void)
++{
++    int ret;
++
++    ret = autosuspend_init();
++    if (ret) {
++        return ret;
++    }
++
++    ALOGV("autosuspend_enable\n");
++
++    if (autosuspend_enabled) {
++        return 0;
++    }
++
++    ret = autosuspend_ops->bootfast();
++    if (ret) {
++        return ret;
++    }
++
++    autosuspend_enabled = true;
++    return 0;
++}
+diff --git a/system/core/libsuspend/autosuspend_autosleep.c b/system/core/libsuspend/autosuspend_autosleep.c
+--- a/system/core/libsuspend/autosuspend_autosleep.c
++++ b/system/core/libsuspend/autosuspend_autosleep.c
+@@ -77,9 +77,16 @@ static int autosuspend_autosleep_disable(void)
+     return ret;
+ }
+ 
++static int autosuspend_autosleep_bootfast(void)
++{
++  ALOGV("not support\n");
++  return 0;
++}
++
+ struct autosuspend_ops autosuspend_autosleep_ops = {
+         .enable = autosuspend_autosleep_enable,
+         .disable = autosuspend_autosleep_disable,
++    .bootfast = autosuspend_autosleep_bootfast,
+ };
+ 
+ struct autosuspend_ops *autosuspend_autosleep_init(void)
+diff --git a/system/core/libsuspend/autosuspend_earlysuspend.c b/system/core/libsuspend/autosuspend_earlysuspend.c
+--- a/system/core/libsuspend/autosuspend_earlysuspend.c
++++ b/system/core/libsuspend/autosuspend_earlysuspend.c
+@@ -36,6 +36,7 @@
+ static int sPowerStatefd;
+ static const char *pwr_state_mem = "mem";
+ static const char *pwr_state_on = "on";
++static const char *pwr_state_bootfast="bootfast";
+ static pthread_t earlysuspend_thread;
+ static pthread_mutex_t earlysuspend_mutex = PTHREAD_MUTEX_INITIALIZER;
+ static pthread_cond_t earlysuspend_cond = PTHREAD_COND_INITIALIZER;
+@@ -132,6 +133,28 @@ static int autosuspend_earlysuspend_enable(void)
+     return ret;
+ }
+ 
++static int autosuspend_earlysuspend_gotobootfast(void)
++{
++    char buf[80];
++    int ret;
++
++    ALOGV("autosuspend_earlysuspend_gotobootfast\n");
++  
++    ret = write(sPowerStatefd, pwr_state_bootfast, strlen(pwr_state_bootfast));
++    if (ret < 0) {
++        strerror_r(errno, buf, sizeof(buf));
++        ALOGE("Error writing to %s: %s\n", EARLYSUSPEND_SYS_POWER_STATE, buf);
++        goto err;
++    }
++
++    ALOGV("autosuspend_earlysuspend_gotobootfast done\n");
++
++    return 0;
++
++err:
++    return ret;
++}
++
+ static int autosuspend_earlysuspend_disable(void)
+ {
+     char buf[80];
+@@ -165,6 +188,7 @@ static int autosuspend_earlysuspend_disable(void)
+ struct autosuspend_ops autosuspend_earlysuspend_ops = {
+         .enable = autosuspend_earlysuspend_enable,
+         .disable = autosuspend_earlysuspend_disable,
++    .bootfast = autosuspend_earlysuspend_gotobootfast,
+ };
+ 
+ void start_earlysuspend_thread(void)
+diff --git a/system/core/libsuspend/autosuspend_ops.h b/system/core/libsuspend/autosuspend_ops.h
+--- a/system/core/libsuspend/autosuspend_ops.h
++++ b/system/core/libsuspend/autosuspend_ops.h
+@@ -20,6 +20,7 @@
+ struct autosuspend_ops {
+     int (*enable)(void);
+     int (*disable)(void);
++  int (*bootfast)(void);
+ };
+ 
+ struct autosuspend_ops *autosuspend_autosleep_init(void);
+diff --git a/system/core/libsuspend/autosuspend_wakeup_count.c b/system/core/libsuspend/autosuspend_wakeup_count.c
+--- a/system/core/libsuspend/autosuspend_wakeup_count.c
++++ b/system/core/libsuspend/autosuspend_wakeup_count.c
+@@ -130,10 +130,15 @@ static int autosuspend_wakeup_count_disable(void)
+ 
+     return ret;
+ }
+-
++static int autosuspend_wakeup_count_bootfast(void)
++{
++  ALOGV("not support\n");
++  return 0;
++}
+ struct autosuspend_ops autosuspend_wakeup_count_ops = {
+         .enable = autosuspend_wakeup_count_enable,
+         .disable = autosuspend_wakeup_count_disable,
++    .bootfast = autosuspend_wakeup_count_bootfast,
+ };
+ 
+ struct autosuspend_ops *autosuspend_wakeup_count_init(void)
+diff --git a/system/core/libsuspend/include/suspend/autosuspend.h b/system/core/libsuspend/include/suspend/autosuspend.h
+--- a/system/core/libsuspend/include/suspend/autosuspend.h
++++ b/system/core/libsuspend/include/suspend/autosuspend.h
+@@ -43,6 +43,8 @@
+  */
+ int autosuspend_disable(void);
+ 
++int autosuspend_bootfast(void);
++
+ __END_DECLS
+ 
+ #endif

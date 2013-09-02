@@ -18,9 +18,12 @@
  * Contains implementation of a class HALCameraFactory that manages cameras
  * available for emulation.
  */
-
-#define LOG_TAG "HALCameraFactory"
 #include "CameraDebug.h"
+#if DBG_CAMERA_FACTORY
+#define LOG_NDEBUG 0
+#endif
+#define LOG_TAG "HALCameraFactory"
+#include <cutils/log.h>
 
 #include <cutils/properties.h>
 
@@ -41,13 +44,13 @@ HALCameraFactory::HALCameraFactory()
           mCameraHardwareNum(0),
           mConstructedOK(false)
 {
-	        
+	F_LOG;
 
 	// camera config information
 	mCameraConfig = new CCameraConfig(0);
 	if(mCameraConfig == 0)
 	{
-		ALOGE("create CCameraConfig failed");
+		LOGE("create CCameraConfig failed");
 		return ;
 	}
 
@@ -61,7 +64,7 @@ HALCameraFactory::HALCameraFactory()
     if (mHardwareCameras == NULL) {
         mHardwareCameras = new CameraHardware*[mCameraHardwareNum];
         if (mHardwareCameras == NULL) {
-            ALOGE("%s: Unable to allocate V4L2Camera array for %d entries",
+            LOGE("%s: Unable to allocate V4L2Camera array for %d entries",
                  __FUNCTION__, mCameraHardwareNum);
             return;
         }
@@ -72,31 +75,22 @@ HALCameraFactory::HALCameraFactory()
 	for (int id = 0; id < mCameraHardwareNum; id++)
 	{
 		mHardwareCameras[id] = new CameraHardwareDevice(id, &HAL_MODULE_INFO_SYM.common);
-		if (mHardwareCameras[id] != NULL) 
-		{
-	        if (mHardwareCameras[id]->Initialize() != NO_ERROR) 
-			{
-	            delete mHardwareCameras[id];
-	            mHardwareCameras--;
-				return;
-		    } 
-		}
-		else 
+		if (mHardwareCameras[id] == NULL)
 		{
 	        mHardwareCameras--;
-	        ALOGE("%s: Unable to instantiate fake camera class", __FUNCTION__);
+	        LOGE("%s: Unable to instantiate fake camera class", __FUNCTION__);
 			return;
 	    }
 	}
 
-	ALOGV("%d cameras are being created.", mCameraHardwareNum);
+	LOGV("%d cameras are being created.", mCameraHardwareNum);
 
     mConstructedOK = true;
 }
 
 HALCameraFactory::~HALCameraFactory()
 {
-	        
+	F_LOG;
     if (mHardwareCameras != NULL) {
         for (int n = 0; n < mCameraHardwareNum; n++) {
             if (mHardwareCameras[n] != NULL) {
@@ -117,35 +111,41 @@ HALCameraFactory::~HALCameraFactory()
 
 int HALCameraFactory::cameraDeviceOpen(int camera_id, hw_device_t** device)
 {
-    ALOGV("%s: id = %d", __FUNCTION__, camera_id);
+    LOGV("%s: id = %d", __FUNCTION__, camera_id);
 
     *device = NULL;
 
     if (!isConstructedOK()) {
-        ALOGE("%s: HALCameraFactory has failed to initialize", __FUNCTION__);
+        LOGE("%s: HALCameraFactory has failed to initialize", __FUNCTION__);
         return -EINVAL;
     }
 
     if (camera_id < 0 || camera_id >= getCameraHardwareNum()) {
-        ALOGE("%s: Camera id %d is out of bounds (%d)",
+        LOGE("%s: Camera id %d is out of bounds (%d)",
              __FUNCTION__, camera_id, getCameraHardwareNum());
         return -EINVAL;
     }
 
+	if (mHardwareCameras[camera_id]->Initialize() != NO_ERROR) 
+	{
+		LOGE("%s: Unable to Initialize camera class", __FUNCTION__);
+		return -EINVAL;
+	}
+	
     return mHardwareCameras[camera_id]->connectCamera(device);
 }
 
 int HALCameraFactory::getCameraInfo(int camera_id, struct camera_info* info)
 {
-    ALOGV("%s: id = %d", __FUNCTION__, camera_id);
+    LOGV("%s: id = %d", __FUNCTION__, camera_id);
 
     if (!isConstructedOK()) {
-        ALOGE("%s: HALCameraFactory has failed to initialize", __FUNCTION__);
+        LOGE("%s: HALCameraFactory has failed to initialize", __FUNCTION__);
         return -EINVAL;
     }
 
     if (camera_id < 0 || camera_id >= getCameraHardwareNum()) {
-        ALOGE("%s: Camera id %d is out of bounds (%d)",
+        LOGE("%s: Camera id %d is out of bounds (%d)",
              __FUNCTION__, camera_id, getCameraHardwareNum());
         return -EINVAL;
     }
@@ -161,19 +161,19 @@ int HALCameraFactory::device_open(const hw_module_t* module,
                                        const char* name,
                                        hw_device_t** device)
 {
-	        
+	F_LOG;
     /*
      * Simply verify the parameters, and dispatch the call inside the
      * HALCameraFactory instance.
      */
 
     if (module != &HAL_MODULE_INFO_SYM.common) {
-        ALOGE("%s: Invalid module %p expected %p",
+        LOGE("%s: Invalid module %p expected %p",
              __FUNCTION__, module, &HAL_MODULE_INFO_SYM.common);
         return -EINVAL;
     }
     if (name == NULL) {
-        ALOGE("%s: NULL name is not expected here", __FUNCTION__);
+        LOGE("%s: NULL name is not expected here", __FUNCTION__);
         return -EINVAL;
     }
 
@@ -182,14 +182,14 @@ int HALCameraFactory::device_open(const hw_module_t* module,
 
 int HALCameraFactory::get_number_of_cameras(void)
 {
-	        
+	F_LOG;
     return gEmulatedCameraFactory.getCameraHardwareNum();
 }
 
 int HALCameraFactory::get_camera_info(int camera_id,
                                            struct camera_info* info)
 {
-	        
+	F_LOG;
     return gEmulatedCameraFactory.getCameraInfo(camera_id, info);
 }
 
@@ -203,3 +203,20 @@ struct hw_module_methods_t HALCameraFactory::mCameraModuleMethods = {
 };
 
 }; /* namespace android */
+
+camera_module_t HAL_MODULE_INFO_SYM = {
+    common: {
+         tag:           		HARDWARE_MODULE_TAG,
+		 module_api_version:	CAMERA_MODULE_API_VERSION_1_0,   //CAMERA_MODULE_API_VERSION_2_0,
+		 hal_api_version:	 	HARDWARE_HAL_API_VERSION,
+         id:            		CAMERA_HARDWARE_MODULE_ID,
+         name:          		"V4L2Camera Module",
+         author:        		"The Android Open Source Project",
+         methods:       		&android::HALCameraFactory::mCameraModuleMethods,
+         dso:           		NULL,
+         reserved:      		{0},
+    },
+    get_number_of_cameras:  	android::HALCameraFactory::get_number_of_cameras,
+    get_camera_info:        	android::HALCameraFactory::get_camera_info,
+};
+

@@ -21,8 +21,10 @@
  * Contains common declarations that are used across the camera emulation.
  */
 
+#include <binder/IPCThreadState.h>
 #include <linux/videodev2.h>
 #include <hardware/camera.h>
+#include <fcntl.h> 
 
 /* A helper class that tracks a routine execution.
  * Basically, it dumps an enry message in its constructor, and an exit message
@@ -34,12 +36,12 @@ public:
     /* Constructor that prints an "entry" trace message. */
     explicit HWERoutineTracker(const char* name)
             : mName(name) {
-        ALOGV("Entering %s", mName);
+        LOGV("Entering %s", mName);
     }
 
     /* Destructor that prints a "leave" trace message. */
     ~HWERoutineTracker() {
-        ALOGV("Leaving %s", mName);
+        LOGV("Leaving %s", mName);
     }
 
 private:
@@ -56,5 +58,14 @@ private:
 
 #define min(a,b)    (((a) < (b)) ? (a) : (b))
 #define max(a,b)    (((a) > (b)) ? (a) : (b))
+
+#define GET_CALLING_PID	(IPCThreadState::self()->getCallingPid())
+
+extern "C" int cedarx_hardware_init(int mode);
+extern "C" int cedarx_hardware_exit(int mode);
+extern "C" void *cedara_phymalloc_map(unsigned int size, int align);
+extern "C" void cedara_phyfree_map(void *buf);
+extern "C" unsigned int cedarv_address_vir2phy(void *addr);
+extern "C" unsigned int cedarv_address_phy2vir(void *addr);
 
 #endif  /* HW_EMULATOR_CAMERA_EMULATED_CAMERA_COMMON_H */

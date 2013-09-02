@@ -95,7 +95,8 @@ PRODUCT_COPY_FILES += \
 
 #Wlan
 PRODUCT_PACKAGES += \
-	libnetcmdiface
+	libnetcmdiface \
+	dhcpcd.conf
 
 # Device specific settings
 PRODUCT_PACKAGES += \
@@ -125,7 +126,8 @@ PRODUCT_PACKAGES += \
 	libaudioutils \
 	chat \
 	u3gmonitor \
-	devlistener
+	devlistener \
+	dispctl
 
 PRODUCT_PACKAGES += \
 	libthirdpartstream \

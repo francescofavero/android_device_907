@@ -18,9 +18,12 @@
  * Contains implementation of a class CameraHardwareDevice that encapsulates
  * functionality of a fake camera.
  */
-
-#define LOG_TAG "CameraHardwareDevice"
 #include "CameraDebug.h"
+#if DBG_CAMERA_HARDWARE
+#define LOG_NDEBUG 0
+#endif
+#define LOG_TAG "CameraHardwareDevice"
+#include <cutils/log.h>
 
 #include <cutils/properties.h>
 #include "CameraHardwareDevice.h"
@@ -57,7 +60,7 @@ status_t CameraHardwareDevice::Initialize()
 	mV4L2CameraDevice = new V4L2CameraDevice(this, mCameraID);
 	if (mV4L2CameraDevice == NULL)
 	{
-		ALOGE("Failed to create V4L2Camera instance");
+		LOGE("Failed to create V4L2Camera instance");
 		return NO_MEMORY;
 	}
 	
@@ -89,7 +92,6 @@ status_t CameraHardwareDevice::Initialize()
 
 V4L2CameraDevice* CameraHardwareDevice::getCameraDevice()
 {
-	F_LOG;
     return mV4L2CameraDevice;
 }
 

@@ -11,6 +11,7 @@
 
 #define kNUMBER_OF_CAMERA					"number_of_camera"
 #define kCAMERA_FACING						"camera_facing"
+#define kCAMERA_ORIENTATION					"camera_orientation"
 #define kCAMERA_DEVICE						"camera_device"
 #define kDEVICE_ID							"device_id"
 
@@ -83,6 +84,11 @@ public:
 		return mCameraFacing;
 	}
 
+	int getCameraOrientation()
+	{
+		return mOrientation;
+	}
+	
 	char * cameraDevice()
 	{
 		return mCameraDevice;
@@ -192,6 +198,7 @@ private:
 	int mCurCameraId;
 	int mNumberOfCamera;
 	int mCameraFacing;
+	int mOrientation;
 	char mCameraDevice[64];
 	int mDeviceID;
 

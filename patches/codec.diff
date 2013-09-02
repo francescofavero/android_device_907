@@ -77,7 +77,7 @@ diff --git a/frameworks/av/include/media/stagefright/MediaExtractor.h b/framewor
 -        kIncludeExtensiveMetaData = 1
 -    };
 +        kIncludeExtensiveMetaData = 1,
-+        kIncludeExtensiveMetaDataBitrate = 256
++        kIncludeExtensiveMetaDataBitrate = 256,
 +};
      virtual sp<MetaData> getTrackMetaData(
              size_t index, uint32_t flags = 0) = 0;
@@ -180,3 +180,31 @@ diff --git a/system/core/include/system/window.h b/system/core/include/system/wi
  /*
   * native_window_set_buffers_dimensions(..., int w, int h)
   * All buffers dequeued after this call will have the dimensions specified.
+diff --git a/frameworks/native/include/media/openmax/OMX_Core.h b/frameworks/native/include/media/openmax/OMX_Core.h
+--- a/frameworks/native/include/media/openmax/OMX_Core.h
++++ b/frameworks/native/include/media/openmax/OMX_Core.h
+@@ -409,7 +409,7 @@
+  */
+ #define OMX_BUFFERFLAG_CODECCONFIG 0x00000080
+ 
+-
++#define OMX_BUFFERFLAG_VENDOR_SEEK_SYNC 0x00010000
+ 
+ /** @ingroup buf */
+ typedef struct OMX_BUFFERHEADERTYPE
+diff --git a/frameworks/native/include/media/openmax/OMX_Index.h b/frameworks/native/include/media/openmax/OMX_Index.h
+--- a/frameworks/native/include/media/openmax/OMX_Index.h
++++ b/frameworks/native/include/media/openmax/OMX_Index.h
+@@ -264,6 +264,12 @@
+        private indexes are not guaranteed unique and therefore should
+        only be sent to the appropriate component. */
+ 
++  OMX_IndexParamEnableAndroidBuffers    = 0x7FF00000,
++  OMX_IndexParamGetAndroidNativeBuffer,
++  OMX_IndexParamUseAndroidNativeBuffer,
++  OMX_IndexParamUseAndroidNativeBuffer2,
++
++  OMX_IndexParamVendorFlushBuffer,
+     OMX_IndexMax = 0x7FFFFFFF
+ 
+ } OMX_INDEXTYPE;

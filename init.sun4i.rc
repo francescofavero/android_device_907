@@ -16,14 +16,6 @@ on boot
         # Enable interactive governor
         write /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor interactive
 
-        # Lower maximum frequency when screen is off
-        write /sys/devices/system/cpu/cpu0/cpufreq/screen_off_max_freq 696000
-
-        # cpufreq interactive governor: timer 20ms, min sample 20ms, hispeed 700MHz
-        write /sys/devices/system/cpu/cpufreq/interactive/timer_rate 20000
-        write /sys/devices/system/cpu/cpufreq/interactive/min_sample_time 20000
-        write /sys/devices/system/cpu/cpufreq/interactive/hispeed_freq 696000
-
         # chown adequately for power HAL
         chown system system /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq
         chown system system /sys/devices/system/cpu/cpufreq/interactive/input_boost
@@ -33,6 +25,11 @@ on boot
         chown system system /sys/devices/system/cpu/cpufreq/interactive/hispeed_freq
         chown system system /sys/devices/system/cpu/cpufreq/interactive/go_hispeed_load
         chown system system /sys/devices/system/cpu/cpufreq/interactive/above_hispeed_delay
+        
+        # cpufreq interactive governor: timer 20ms, min sample 20ms, hispeed 700MHz
+        write /sys/devices/system/cpu/cpufreq/interactive/timer_rate 20000
+        write /sys/devices/system/cpu/cpufreq/interactive/min_sample_time 20000
+        write /sys/devices/system/cpu/cpufreq/interactive/hispeed_freq 696000
 
 	# gpu drivers
 	insmod /system/lib/modules/ump.ko
@@ -77,7 +74,6 @@ on boot
 	insmod /system/lib/modules/mcs7830.ko
 	insmod /system/lib/modules/rtl8150.ko
 	# other
-	insmod /system/lib/modules/8192cu.ko
 	insmod /system/lib/modules/cp2526.ko
         insmod /system/lib/modules/ssd253x_duod.ko
 	# misc

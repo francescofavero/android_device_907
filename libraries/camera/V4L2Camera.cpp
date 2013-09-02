@@ -22,12 +22,15 @@
  *  - Streaming video
  *  - etc.
  */
-#define LOG_TAG "V4L2Camera"
 #include "CameraDebug.h"
+#if DBG_V4L2_CAMERA
+#define LOG_NDEBUG 0
+#endif
+#define LOG_TAG "V4L2Camera"
+#include <cutils/log.h>
 
 #include <sys/select.h>
 #include "V4L2Camera.h"
-#include "Converters.h"
 
 namespace android {
 
@@ -35,22 +38,29 @@ V4L2Camera::V4L2Camera(CameraHardware* camera_hal)
     : mObjectLock(),
       mCurFrameTimestamp(0),
       mCameraHAL(camera_hal),
-      mCurrentFrame(NULL),
       mState(ECDS_CONSTRUCTED),
       mTakingPicture(false),
-      mInPictureThread(false),
-      mStartDeliverTimeUs(0)
+      mTakingPictureRecord(false),
+      mThreadRunning(false)
 {
 	F_LOG;
+	
+	pthread_mutex_init(&mTakePhotoMutex, NULL);
+	pthread_cond_init(&mTakePhotoCond, NULL);
+	
+	pthread_mutex_init(&mThreadRunningMutex, NULL);
+	pthread_cond_init(&mThreadRunningCond, NULL);
 }
 
 V4L2Camera::~V4L2Camera()
 {
 	F_LOG;
 
-    if (mCurrentFrame != NULL) {
-        delete[] mCurrentFrame;
-    }
+	pthread_mutex_destroy(&mTakePhotoMutex);
+	pthread_cond_destroy(&mTakePhotoCond);
+	
+	pthread_mutex_destroy(&mThreadRunningMutex);
+	pthread_cond_destroy(&mThreadRunningCond);
 }
 
 /****************************************************************************
@@ -61,7 +71,7 @@ status_t V4L2Camera::Initialize()
 {
 	F_LOG;
     if (isInitialized()) {
-        ALOGW("%s: V4L2Camera device is already initialized: mState = %d",
+        LOGW("%s: V4L2Camera device is already initialized: mState = %d",
              __FUNCTION__, mState);
         return NO_ERROR;
     }
@@ -69,7 +79,7 @@ status_t V4L2Camera::Initialize()
     /* Instantiate worker thread object. */
     mWorkerThread = new WorkerThread(this);
     if (getWorkerThread() == NULL) {
-        ALOGE("%s: Unable to instantiate worker thread object", __FUNCTION__);
+        LOGE("%s: Unable to instantiate worker thread object", __FUNCTION__);
         return ENOMEM;
     }
 
@@ -80,74 +90,52 @@ status_t V4L2Camera::Initialize()
 
 status_t V4L2Camera::startDeliveringFrames(bool one_burst)
 {
-    ALOGV("%s", __FUNCTION__);
+    LOGV("%s", __FUNCTION__);
 
-	mStartDeliverTimeUs = systemTime() / 1000;
+	mThreadRunning = false;
 
     if (!isStarted()) {
-        ALOGE("%s: Device is not started", __FUNCTION__);
+        LOGE("%s: Device is not started", __FUNCTION__);
         return EINVAL;
     }
 
     /* Frames will be delivered from the thread routine. */
     const status_t res = startWorkerThread(one_burst);
-    ALOGE_IF(res != NO_ERROR, "%s: startWorkerThread failed", __FUNCTION__);
+    LOGE_IF(res != NO_ERROR, "%s: startWorkerThread failed", __FUNCTION__);
     return res;
 }
 
 status_t V4L2Camera::stopDeliveringFrames()
 {
-    ALOGV("%s", __FUNCTION__);
+    LOGV("%s", __FUNCTION__);
+	
+	pthread_mutex_lock(&mTakePhotoMutex);
+	if (mTakingPicture)
+	{
+		LOGW("wait until take picture end before stop thread ......");		
+		pthread_cond_wait(&mTakePhotoCond, &mTakePhotoMutex);
+		LOGW("wait take picture ok");
+	}
+	pthread_mutex_unlock(&mTakePhotoMutex);
 
 	// for CTS, V4L2Camera::WorkerThread::readyToRun must be called before stopDeliveringFrames
-	int64_t nowTimeUs = systemTime() / 1000;
-	if (nowTimeUs - mStartDeliverTimeUs < 1000000)
+	pthread_mutex_lock(&mThreadRunningMutex);
+	if (!mThreadRunning)
 	{
-		ALOGW("should not stop preview so quickly, to delay 1 sec ......");
-		// usleep(1000000);
+		LOGW("should not stop preview so quickly, wait thread running first ......");
+		pthread_cond_wait(&mThreadRunningCond, &mThreadRunningMutex);
+		LOGW("wait thread running ok");
 	}
+	pthread_mutex_unlock(&mThreadRunningMutex);
 	
     if (!isStarted()) {
-        ALOGW("%s: Device is not started", __FUNCTION__);
+        LOGW("%s: Device is not started", __FUNCTION__);
         return NO_ERROR;
     }
 
     const status_t res = stopWorkerThread();
-    ALOGE_IF(res != NO_ERROR, "%s: startWorkerThread failed", __FUNCTION__);
+    LOGE_IF(res != NO_ERROR, "%s: startWorkerThread failed", __FUNCTION__);
     return res;
-}
-
-status_t V4L2Camera::getCurrentPreviewFrame(void* buffer)
-{
-    if (!isStarted()) {
-        ALOGE("%s: Device is not started", __FUNCTION__);
-        return EINVAL;
-    }
-    if (mCurrentFrame == NULL || buffer == NULL) {
-        ALOGE("%s: No framebuffer", __FUNCTION__);
-        return EINVAL;
-    }
-
-    /* In emulation the framebuffer is never RGB. */
-    switch (mPixelFormat) {
-        case V4L2_PIX_FMT_YVU420:
-            YV12ToRGB32(mCurrentFrame, buffer, mFrameWidth, mFrameHeight);
-            return NO_ERROR;
-        case V4L2_PIX_FMT_YUV420:
-            YU12ToRGB32(mCurrentFrame, buffer, mFrameWidth, mFrameHeight);
-            return NO_ERROR;
-        case V4L2_PIX_FMT_NV21:
-            NV21ToRGB32(mCurrentFrame, buffer, mFrameWidth, mFrameHeight);
-            return NO_ERROR;
-        case V4L2_PIX_FMT_NV12:
-            NV12ToRGB32(mCurrentFrame, buffer, mFrameWidth, mFrameHeight);
-            return NO_ERROR;
-
-        default:
-            ALOGE("%s: Unknown pixel format %.4s",
-                 __FUNCTION__, reinterpret_cast<const char*>(&mPixelFormat));
-            return EINVAL;
-    }
 }
 
 /****************************************************************************
@@ -170,7 +158,7 @@ status_t V4L2Camera::commonStartDevice(int width,
             break;
 
         default:
-            ALOGE("%s: Unknown pixel format %.4s",
+            LOGE("%s: Unknown pixel format %.4s",
                  __FUNCTION__, reinterpret_cast<const char*>(&pix_fmt));
             return EINVAL;
     }
@@ -181,16 +169,6 @@ status_t V4L2Camera::commonStartDevice(int width,
     mPixelFormat = pix_fmt;
     mTotalPixels = width * height;
 
-    /* Allocate framebuffer. */
-    mCurrentFrame = new uint8_t[mFrameBufferSize];
-    if (mCurrentFrame == NULL) {
-        ALOGE("%s: Unable to allocate framebuffer", __FUNCTION__);
-        return ENOMEM;
-    }
-    ALOGV("%s: Allocated %p %d bytes for %d pixels in %.4s[%dx%d] frame",
-         __FUNCTION__, mCurrentFrame, mFrameBufferSize, mTotalPixels,
-         reinterpret_cast<const char*>(&mPixelFormat), mFrameWidth, mFrameHeight);
-
     return NO_ERROR;
 }
 
@@ -199,11 +177,6 @@ void V4L2Camera::commonStopDevice()
 	F_LOG;
     mFrameWidth = mFrameHeight = mTotalPixels = 0;
     mPixelFormat = 0;
-	
-    if (mCurrentFrame != NULL) {
-        delete[] mCurrentFrame;
-        mCurrentFrame = NULL;
-    }
 }
 
 /****************************************************************************
@@ -212,29 +185,29 @@ void V4L2Camera::commonStopDevice()
 
 status_t V4L2Camera::startWorkerThread(bool one_burst)
 {
-    ALOGV("%s", __FUNCTION__);
+    LOGV("%s", __FUNCTION__);
 
     if (!isInitialized()) {
-        ALOGE("%s: V4L2Camera device is not initialized", __FUNCTION__);
+        LOGE("%s: V4L2Camera device is not initialized", __FUNCTION__);
         return EINVAL;
     }
 
     const status_t res = getWorkerThread()->startThread(one_burst);
-    ALOGE_IF(res != NO_ERROR, "%s: Unable to start worker thread", __FUNCTION__);
+    LOGE_IF(res != NO_ERROR, "%s: Unable to start worker thread", __FUNCTION__);
     return res;
 }
 
 status_t V4L2Camera::stopWorkerThread()
 {
-    ALOGV("%s", __FUNCTION__);
+    LOGV("%s", __FUNCTION__);
 
     if (!isInitialized()) {
-        ALOGE("%s: V4L2Camera device is not initialized", __FUNCTION__);
+        LOGE("%s: V4L2Camera device is not initialized", __FUNCTION__);
         return EINVAL;
     }
 
     const status_t res = getWorkerThread()->stopThread();
-    ALOGE_IF(res != NO_ERROR, "%s: Unable to stop worker thread", __FUNCTION__);
+    LOGE_IF(res != NO_ERROR, "%s: Unable to stop worker thread", __FUNCTION__);
     return res;
 }
 
@@ -252,19 +225,20 @@ bool V4L2Camera::inWorkerThread()
 
 status_t V4L2Camera::WorkerThread::readyToRun()
 {
-    ALOGV("Starting V4L2Camera device worker thread...");
+    LOGV("V4L2Camera::WorkerThread::readyToRun");
 
-    ALOGW_IF(mThreadControl >= 0 || mControlFD >= 0,
+    LOGW_IF(mThreadControl >= 0 || mControlFD >= 0,
             "%s: Thread control FDs are opened", __FUNCTION__);
     /* Create a pair of FDs that would be used to control the thread. */
     int thread_fds[2];
     if (pipe(thread_fds) == 0) {
         mThreadControl = thread_fds[1];
         mControlFD = thread_fds[0];
-        ALOGV("V4L2Camera's worker thread has been started.");
+        LOGV("V4L2Camera's worker thread has been started.");
+
         return NO_ERROR;
     } else {
-        ALOGE("%s: Unable to create thread control FDs: %d -> %s",
+        LOGE("%s: Unable to create thread control FDs: %d -> %s",
              __FUNCTION__, errno, strerror(errno));
         return errno;
     }
@@ -272,7 +246,7 @@ status_t V4L2Camera::WorkerThread::readyToRun()
 
 status_t V4L2Camera::WorkerThread::stopThread()
 {
-    ALOGV("Stopping V4L2Camera device's worker thread...");
+    LOGV("Stopping V4L2Camera device's worker thread...");
 
     status_t res = EINVAL;
     if (mThreadControl >= 0) {
@@ -293,21 +267,21 @@ status_t V4L2Camera::WorkerThread::stopThread()
                     close(mControlFD);
                     mControlFD = -1;
                 }
-                ALOGV("V4L2Camera device's worker thread has been stopped.");
+                LOGV("V4L2Camera device's worker thread has been stopped.");
             } else {
-                ALOGE("%s: requestExitAndWait failed: %d -> %s",
+                LOGE("%s: requestExitAndWait failed: %d -> %s",
                      __FUNCTION__, res, strerror(-res));
             }
         } else {
-            ALOGE("%s: Unable to send THREAD_STOP message: %d -> %s",
+            LOGE("%s: Unable to send THREAD_STOP message: %d -> %s",
                  __FUNCTION__, errno, strerror(errno));
             res = errno ? errno : EINVAL;
         }
     } else {
-        ALOGE("%s: Thread control FDs are not opened", __FUNCTION__);
+        LOGE("%s: Thread control FDs are not opened", __FUNCTION__);
     }
 	
-	ALOGV("Stopping V4L2Camera device's worker thread... OK");
+	LOGV("Stopping V4L2Camera device's worker thread... OK");
 
     return res;
 }
@@ -333,7 +307,7 @@ V4L2Camera::WorkerThread::Select(int fd, int timeout)
     }
     int res = TEMP_FAILURE_RETRY(select(fd_num, fds, NULL, NULL, tvp));
     if (res < 0) {
-        ALOGE("%s: select returned %d and failed: %d -> %s",
+        LOGE("%s: select returned %d and failed: %d -> %s",
              __FUNCTION__, res, errno, strerror(errno));
         return ERROR;
     } else if (res == 0) {
@@ -344,21 +318,21 @@ V4L2Camera::WorkerThread::Select(int fd, int timeout)
         ControlMessage msg;
         res = TEMP_FAILURE_RETRY(read(mControlFD, &msg, sizeof(msg)));
         if (res != sizeof(msg)) {
-            ALOGE("%s: Unexpected message size %d, or an error %d -> %s",
+            LOGE("%s: Unexpected message size %d, or an error %d -> %s",
                  __FUNCTION__, res, errno, strerror(errno));
             return ERROR;
         }
         /* THREAD_STOP is the only message expected here. */
         if (msg == THREAD_STOP) {
-            ALOGV("%s: THREAD_STOP message is received", __FUNCTION__);
+            LOGV("%s: THREAD_STOP message is received", __FUNCTION__);
             return EXIT_THREAD;
         } else {
-            ALOGE("Unknown worker thread message %d", msg);
+            LOGE("Unknown worker thread message %d", msg);
             return ERROR;
         }
     } else {
         /* Must be an FD. */
-        ALOGW_IF(fd < 0 || !FD_ISSET(fd, fds), "%s: Undefined 'select' result",
+        LOGW_IF(fd < 0 || !FD_ISSET(fd, fds), "%s: Undefined 'select' result",
                 __FUNCTION__);
         return READY;
     }

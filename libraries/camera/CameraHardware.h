@@ -26,12 +26,16 @@
  * by camera_device_ops_t API.
  */
 
+#include <videodev2.h>
 #include <camera/CameraParameters.h>
+#include <FaceDetectionApi.h>
 
 #include "CCameraConfig.h"
 #include "V4L2CameraDevice.h"
 #include "PreviewWindow.h"
 #include "CallbackNotifier.h"
+#include "OSAL_Queue.h"
+
 
 namespace android {
 
@@ -93,11 +97,13 @@ public:
      * camera_dev - Camera device instance that delivered the frame.
      */
     virtual bool onNextFrameAvailable(const void* frame,
+    								  int video_fmt,
                                       nsecs_t timestamp,
                                       V4L2Camera* camera_dev,
                                       bool bUseMataData);
 
 	virtual bool onNextFramePreview(const void* frame,
+                                    int video_fmt,
                                     nsecs_t timestamp,
                                     V4L2Camera* camera_dev,
                                     bool bUseMataData);
@@ -433,17 +439,110 @@ public:
 	bool isUseMetaDataBufferMode();
 
 	void onTakingPicture(const void* frame, V4L2Camera* camera_dev, bool bUseMataData);
+	
+	void setCrop(Rect * rect, int new_zoom);
+	int setAutoFocusMode();
+	int setAutoFocusCtrl(int af_ctrl, void *areas);
+	int getCurrentFaceFrame(void * frame);
+    int getRotation(int * rotation);
+	int faceDetection(camera_frame_metadata_t *face);
+    
+    int parse_focus_areas(const char * str);
+	bool checkFocusArea(const char * area);
+	bool checkFocusMode(const char * mode);
+
+	bool commandThread();
+	bool autoFocusThread();
 
 protected:
 	CCameraConfig * mCameraConfig;
 
-	int mCurPreviewWidth;
-	int mCurPreviewHeight;
-
-	int mLastPreviewWidth;
-	int mLastPreviewHeight;
-
+	int mDefaultPreviewWidth;
+	int mDefaultPreviewHeight;
+	
 	bool bPixFmtNV12;	// true for NV12, false for NV21
+
+	bool mFirstSetParameters;
+
+	char mCallingProcessName[128];
+
+	FaceDetectionDev * mFaceDetection;
+	
+	Rect mRectCrop;
+	struct v4l2_pix_size mFocusAreas;
+
+	typedef enum CMD_QUEUE_t{
+		CMD_QUEUE_SET_COLOR_EFFECT 	= 0,
+		CMD_QUEUE_SET_WHITE_BALANCE,
+		CMD_QUEUE_SET_FLASH_MODE,
+		CMD_QUEUE_SET_FOCUS_MODE,
+		CMD_QUEUE_SET_FOCUS_AREA,
+		CMD_QUEUE_SET_EXPOSURE_COMPENSATION,
+		
+		CMD_QUEUE_START_FACE_DETECTE,
+		CMD_QUEUE_STOP_FACE_DETECTE,
+
+		CMD_QUEUE_PICTURE_MSG,
+
+		CMD_QUEUE_MAX
+	}CMD_QUEUE;
+
+	OSAL_QUEUE						mQueueCommand;
+	
+	typedef struct Queue_Element_t {
+		CMD_QUEUE cmd;
+		int data;
+	}Queue_Element;
+
+	Queue_Element					mQueueElement[CMD_QUEUE_MAX];
+	char							mFocusAreasStr[32];
+
+	class DoCommandThread : public Thread {
+        CameraHardware* mCameraHardware;
+    public:
+        DoCommandThread(CameraHardware* hw) :
+			Thread(false),
+			mCameraHardware(hw) {
+		}
+        void startThread() {
+			run("CameraCommandThread", PRIORITY_NORMAL);
+        }
+		void stopThread() {
+			requestExitAndWait();
+        }
+        virtual bool threadLoop() {
+			return mCameraHardware->commandThread();
+        }
+    };
+
+	sp<DoCommandThread>				mCommamdThread;
+	
+	pthread_mutex_t 				mCommamdMutex;
+	pthread_cond_t					mCommamdCond;
+
+	class DoAutoFocusThread : public Thread {
+        CameraHardware* mCameraHardware;
+    public:
+        DoAutoFocusThread(CameraHardware* hw) :
+			Thread(false),
+			mCameraHardware(hw) {
+		}
+        void startThread() {
+			run("CameraAudioFocusThread", PRIORITY_NORMAL);
+        }
+		void stopThread() {
+			requestExitAndWait();
+        }
+        virtual bool threadLoop() {
+			return mCameraHardware->autoFocusThread();
+        }
+    };
+	sp<DoAutoFocusThread>			mAutoFocusThread;
+	
+	pthread_mutex_t 				mAutoFocusMutex;
+	pthread_cond_t					mAutoFocusCond;
+	pthread_mutex_t 				mAutoFocusMutexEnd;
+	pthread_cond_t					mAutoFocusCondEnd;
 };
 
 }; /* namespace android */

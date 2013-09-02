@@ -112,6 +112,10 @@ public:
      * Return:
      *  0 if message is disabled, or non-zero value, if message is enabled.
      */
+
+    void getCurrentDateTime();
+
+    
     inline int isMessageEnabled(uint msg_type)
     {
         return mMessageEnabler & msg_type;
@@ -288,17 +292,31 @@ public:
 		mFocalLength = val;
 	}
 	
-	status_t autoFocus();
+	inline void setWhiteBalance(int whitebalance)
+	{
+		mWhiteBalance = whitebalance;
+	}
+	
+	inline void setCallingProcess(char * str)
+	{
+		strcpy(mCallingProcessName, str);
+	}
+
+	status_t autoFocus(bool success);
+	status_t faceDetection(camera_frame_metadata_t *face);
 
 	void takePicture(const void* frame, V4L2Camera* camera_dev, bool bUseMataData);
 	void takePictureHW(const void* frame, V4L2Camera* camera_dev);
 	void takePictureSW(const void* frame, V4L2Camera* camera_dev);
+	void takePictureCB(const void* frame, V4L2Camera* camera_dev);
 	
 protected:
 	bool 							mUseMetaDataBufferMode;
 
 	// JPEG rotate used to compress frame during picture taking.
 	int								mJpegRotate;
+
+	char		mCallingProcessName[128];
 
 	// gps exif
 	double      mGpsLatitude;
@@ -311,6 +329,11 @@ protected:
 	int			mThumbHeight;
 	
 	double		mFocalLength;
+	int 		mWhiteBalance;
+
+	char  		mCameraMake[11];	//for the cameraMake name
+	char  		mCameraModel[21];	//for the cameraMode
+	char  		mDateTime[21];		//for the data and time
 };
 
 }; /* namespace android */

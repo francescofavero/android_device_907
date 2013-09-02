@@ -1,31 +1,20 @@
 diff --git a/frameworks/base/services/java/com/android/server/WifiService.java b/frameworks/base/services/java/com/android/server/WifiService.java
 --- a/frameworks/base/services/java/com/android/server/WifiService.java
 +++ b/frameworks/base/services/java/com/android/server/WifiService.java
-@@ -1032,6 +1032,7 @@ public void onReceive(Context context, Intent intent) {
+@@ -1058,6 +1058,7 @@ public void onReceive(Context context, Intent intent) {
                      Slog.d(TAG, "ACTION_SCREEN_ON");
                  }
                  mAlarmManager.cancel(mIdleIntent);
-+    mWifiStateMachine.releaseKeepaliveLock();
++                mWifiStateMachine.releaseKeepaliveLock();
                  mScreenOff = false;
                  evaluateTrafficStatsPolling();
                  setDeviceIdleAndUpdateWifi(false);
-@@ -1048,14 +1049,18 @@ public void onReceive(Context context, Intent intent) {
-                  * or plugged in to AC).
-                  */
-                 if (!shouldWifiStayAwake(stayAwakeConditions, mPluggedType)) {
-+      mWifiStateMachine.acquireKeepaliveLock();
-                     //Delayed shutdown if wifi is connected
--                    if (mNetworkInfo.getDetailedState() == DetailedState.CONNECTED) {
-+                    //if (mNetworkInfo.getDetailedState() == DetailedState.CONNECTED) {
-+        if (true) {
-                         if (DBG) Slog.d(TAG, "setting ACTION_DEVICE_IDLE: " + idleMillis + " ms");
-                         mAlarmManager.set(AlarmManager.RTC_WAKEUP, System.currentTimeMillis()
-                                 + idleMillis, mIdleIntent);
+@@ -1082,6 +1083,8 @@ public void onReceive(Context context, Intent intent) {
                      } else {
                          setDeviceIdleAndUpdateWifi(true);
                      }
-+    } else {
-+        mWifiStateMachine.acquireKeepaliveLock();
++                } else {
++                    mWifiStateMachine.acquireKeepaliveLock();
                  }
              } else if (action.equals(ACTION_DEVICE_IDLE)) {
                  setDeviceIdleAndUpdateWifi(true);

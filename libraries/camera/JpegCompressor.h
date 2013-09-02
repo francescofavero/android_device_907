@@ -21,7 +21,7 @@
  * Contains declaration of a class NV21JpegCompressor that encapsulates a
  * converter between YV21, and JPEG formats.
  */
-
+#include <utils/Errors.h>
 #include <YuvToJpegEncoder.h>
 
 namespace android {

@@ -18,13 +18,6 @@ include $(CLEAR_VARS)
 
 LOCAL_MODULE_PATH := $(TARGET_OUT_SHARED_LIBRARIES)/hw
 LOCAL_CFLAGS += -fno-short-enums -DQEMU_HARDWARE
-LOCAL_LDFLAGS += \
-	$(LOCAL_PATH)/libcedara_decoder.a \
-	$(LOCAL_PATH)/libjpgenc.a \
-	device/softwinner/907/prebuilt/lib/cedarx/libcedarxosal.so \
-	device/softwinner/907/prebuilt/lib/cedarx/libcedarv_adapter.so \
-	device/softwinner/907/prebuilt/lib/cedarx/libcedarxbase.so
-
 LOCAL_SHARED_LIBRARIES:= \
     libbinder \
     libutils \
@@ -37,17 +30,33 @@ LOCAL_SHARED_LIBRARIES += \
 	libjpeg \
 	libskia \
 	libandroid_runtime
+
+LOCAL_LDFLAGS += \
+	$(LOCAL_PATH)/libcedara_decoder.a \
+	$(LOCAL_PATH)/libjpgenc.a \
+	device/softwinner/907/prebuilt/lib/cedarx/libcedarxosal.so \
+	device/softwinner/907/prebuilt/lib/cedarx/libfacedetection.so \
+	device/softwinner/907/prebuilt/lib/cedarx/libcedarv_adapter.so \
+	device/softwinner/907/prebuilt/lib/cedarx/libcedarxbase.so \
 	
-LOCAL_C_INCLUDES += \
-	external/jpeg \
-	external/skia/include/core \
-	frameworks/base/core/jni/android/graphics \
-        device/softwinner/907/libraries/camera/include_camera \
+# cedarx libraries
+#LOCAL_SHARED_LIBRARIES += \
+	#libfacedetection \
+	#libcedarxosal \
+	#libCedarX
+	
+LOCAL_C_INCLUDES += 								\
+	external/jpeg 									\
+	external/skia/include/core/ 					\
+	frameworks/base/core/jni/android/graphics 		\
+	frameworks/native/include/media/openmax			\
+	hardware/libhardware/include/hardware			\
+	framework/native/include						\
+	device/softwinner/907/libraries/camera/include_camera \
 	$(TARGET_HARDWARE_INCLUDE) \
 	frameworks/native/include/media/hardware
 
 LOCAL_SRC_FILES := \
-	CameraHal.cpp \
 	HALCameraFactory.cpp \
 	CameraHardware.cpp \
 	V4L2Camera.cpp \
@@ -57,11 +66,14 @@ LOCAL_SRC_FILES := \
 	PreviewWindow.cpp \
 	CallbackNotifier.cpp \
 	JpegCompressor.cpp \
-	CCameraConfig.cpp
+	CCameraConfig.cpp \
+	OSAL_Mutex.c \
+	OSAL_Queue.c
+	
 
+LOCAL_CFLAGS += -D__SUN4I__
 
 LOCAL_MODULE := camera.$(TARGET_BOARD_PLATFORM)
 
 LOCAL_MODULE_TAGS := optional
 include $(BUILD_SHARED_LIBRARY)
-

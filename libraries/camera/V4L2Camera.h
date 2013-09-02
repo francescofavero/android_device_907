@@ -26,14 +26,13 @@
  *  - etc.
  */
 
+#include "CameraDebug.h"
 #include <utils/threads.h>
 #include "CameraCommon.h"
 
 namespace android {
 
-#define DEVICE_BACK		"/dev/video0"
-#define DEVICE_FRONT	"/dev/video1"
-#define NB_BUFFER 4
+#define NB_BUFFER 5
 
 class CameraHardware;
 
@@ -91,7 +90,7 @@ public:
      * Return:
      *  NO_ERROR on success, or an appropriate error status.
      */
-    virtual status_t startDevice(int width, int height, uint32_t pix_fmt) = 0;
+    virtual status_t startDevice(int width, int height, uint32_t pix_fmt, bool video_hint) = 0;
 
     /* Stops the camera device.
      * This method tells the camera device to stop capturing frames. Note that
@@ -147,21 +146,6 @@ public:
      */
     virtual status_t stopDeliveringFrames();
 
-    /* Gets current framebuffer, converted into preview frame format.
-     * This method must be called on a connected instance of this class with a
-     * started camera device. If it is called on a disconnected instance, or
-     * camera device has not been started, this method must return a failure.
-     * Note that this method should be called only after at least one frame has
-     * been captured and delivered. Otherwise it will return garbage in the
-     * preview frame buffer. Typically, this method shuld be called from
-     * onNextFrameAvailable callback.
-     * Param:
-     *  buffer - Buffer, large enough to contain the entire preview frame.
-     * Return:
-     *  NO_ERROR on success, or an appropriate error status.
-     */
-    virtual status_t getCurrentPreviewFrame(void* buffer);
-
     /* Gets width of the frame obtained from the physical device.
      * Return:
      *  Width of the frame obtained from the physical device. Note that value
@@ -170,7 +154,7 @@ public:
      */
     inline int getFrameWidth() const
     {
-        ALOGE_IF(!isStarted(), "%s: Device is not started", __FUNCTION__);
+        LOGE_IF(!isStarted(), "%s: Device is not started", __FUNCTION__);
         return mFrameWidth;
     }
 
@@ -182,7 +166,7 @@ public:
      */
     inline int getFrameHeight() const
     {
-        ALOGE_IF(!isStarted(), "%s: Device is not started", __FUNCTION__);
+        LOGE_IF(!isStarted(), "%s: Device is not started", __FUNCTION__);
         return mFrameHeight;
     }
 
@@ -193,7 +177,7 @@ public:
      */
     inline size_t getFrameBufferSize() const
     {
-        ALOGE_IF(!isStarted(), "%s: Device is not started", __FUNCTION__);
+        LOGE_IF(!isStarted(), "%s: Device is not started", __FUNCTION__);
         return mFrameBufferSize;
     }
 
@@ -204,7 +188,7 @@ public:
      */
     inline int getPixelNum() const
     {
-        ALOGE_IF(!isStarted(), "%s: Device is not started", __FUNCTION__);
+        LOGE_IF(!isStarted(), "%s: Device is not started", __FUNCTION__);
         return mTotalPixels;
     }
 
@@ -230,7 +214,7 @@ public:
      */
     inline uint32_t getOriginalPixelFormat() const
     {
-        ALOGE_IF(!isStarted(), "%s: Device is not started", __FUNCTION__);
+        LOGE_IF(!isStarted(), "%s: Device is not started", __FUNCTION__);
         return mPixelFormat;
     }
 
@@ -332,7 +316,7 @@ protected:
 
             inline ~WorkerThread()
             {
-                ALOGW_IF(mThreadControl >= 0 || mControlFD >= 0,
+                LOGW_IF(mThreadControl >= 0 || mControlFD >= 0,
                         "%s: Control FDs are opened in the destructor",
                         __FUNCTION__);
                 if (mThreadControl >= 0) {
@@ -452,9 +436,6 @@ protected:
     /* V4L2Camera object containing this instance. */
     CameraHardware*             mCameraHAL;
 
-    /* Framebuffer containing the current frame. */
-    uint8_t*                    mCurrentFrame;
-
     /*
      * Framebuffer properties.
      */
@@ -497,19 +478,33 @@ protected:
 	
 protected:
 	bool						mTakingPicture;
-	bool						mInPictureThread;
+	bool						mTakingPictureRecord;
 	int							mPictureWidth;
 	int							mPictureHeight;
+	
+	pthread_mutex_t 			mTakePhotoMutex;
+	pthread_cond_t				mTakePhotoCond;
 
-	// add for CTS
-	int64_t						mStartDeliverTimeUs;
-
+	bool						mThreadRunning;	
+	pthread_mutex_t 			mThreadRunningMutex;
+	pthread_cond_t				mThreadRunningCond;
+	
 public:
 	
 	inline void setTakingPicture(bool taking)
 	{
-		mInPictureThread = taking;
+		pthread_mutex_lock(&mTakePhotoMutex);
+		LOGV("setTakingPicture : %s", taking ? "true" : "false");
 		mTakingPicture = taking;
+		pthread_mutex_unlock(&mTakePhotoMutex);
+	}
+
+	inline void setTakingPictureRecord(bool taking)
+	{
+		pthread_mutex_lock(&mTakePhotoMutex);
+		LOGV("setTakingPicture : %s", taking ? "true" : "false");
+		mTakingPictureRecord = taking;
+		pthread_mutex_unlock(&mTakePhotoMutex);
 	}
 	
 	inline int getPictureSize(int * pic_w, int * pic_h)
@@ -526,6 +521,22 @@ public:
 		return OK;
     }
 
+	inline void setThreadRunning(bool running)
+	{
+		pthread_mutex_lock(&mThreadRunningMutex);
+		if (!mThreadRunning)
+		{
+			LOGV("setThreadRunning true");
+			mThreadRunning = running;
+			pthread_cond_signal(&mThreadRunningCond);
+		}
+		pthread_mutex_unlock(&mThreadRunningMutex);
+	}
+
+	inline bool getThreadRunning()
+	{
+		return mThreadRunning;
+	}
 };
 
 }; /* namespace android */

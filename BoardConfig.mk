@@ -41,9 +41,10 @@ ARCH_ARM_HAVE_TLS_REGISTER := true
 
 #Bluetooth and Vibro stuff
 BOARD_HAVE_BLUETOOTH := true
+BOARD_HAVE_BLUETOOTH_BCM := true
+BLUETOOTH_HCI_USE_USB := true
 BOARD_BLUETOOTH_BDROID_BUILDCFG_INCLUDE_DIR := device/softwinner/907/bluetooth
 BOARD_BLUEDROID_VENDOR_CONF := device/softwinner/907/bluetooth/vnd_generic_usb.txt
-BLUETOOTH_HCI_USE_USB := true
 BOARD_HAS_VIBRATOR_IMPLEMENTATION := ../../device/softwinner/907/vibrator.c
 
 # Partition sizes; must be in decimal
@@ -67,34 +68,36 @@ TARGET_BOOTANIMATION_PRELOAD := true
 TARGET_BOOTANIMATION_TEXTURE_CACHE := true
 TARGET_BOOTANIMATION_USE_RGB565 := true
 
+# Cedarx
+CEDARX_CHIP_VERSION := F23
+CEDARX_USE_SWAUDIO := N
+
 #CWM Recovery
 #BOARD_CUSTOM_RECOVERY_KEYMAPPING := ../../device/softwinner/907/recovery_keys.c
-#BOARD_UMS_LUNFILE := "/sys/class/android_usb/android0/f_mass_storage/lun/file"
-#BOARD_UMS_2ND_LUNFILE := "/sys/class/android_usb/android0/f_mass_storage/lun1/file"
+BOARD_UMS_LUNFILE := "/sys/class/android_usb/android0/f_mass_storage/lun/file"
+BOARD_UMS_2ND_LUNFILE := "/sys/class/android_usb/android0/f_mass_storage/lun1/file"
 #TARGET_RECOVERY_INITRC := device/softwinner/907/init.recovery.sun4i.rc
 
 #TWRP recovery
-BOARD_HAS_SDCARD_INTERNAL := true
-TARGET_RECOVERY_INITRC := device/softwinner/907/init.recovery.sun4i.rc
-TARGET_RECOVERY_PIXEL_FORMAT := "BGRA_8888"
-DEVICE_RESOLUTION := 1024x768
-TW_FLASH_FROM_STORAGE := true
-TW_NO_REBOOT_BOOTLOADER := true
+#BOARD_HAS_SDCARD_INTERNAL := true
+#TARGET_RECOVERY_INITRC := device/softwinner/907/init.recovery.sun4i.rc
+#TARGET_RECOVERY_PIXEL_FORMAT := "RGB565"
+#DEVICE_RESOLUTION := 1024x768
+#TW_FLASH_FROM_STORAGE := true
+#TW_NO_REBOOT_BOOTLOADER := true
 #TWRP_EVENT_LOGGING := true
-BOARD_HAS_FLIPPED_SCREEN := true
-TARGET_PREBUILT_RECOVERY_KERNEL := device/softwinner/907/recovery/kernel
-TW_INTERNAL_STORAGE_PATH := "/emmc"
-TW_INTERNAL_STORAGE_MOUNT_POINT := "emmc"
-TW_EXTERNAL_STORAGE_PATH := "/sdcard"
-TW_EXTERNAL_STORAGE_MOUNT_POINT := "sdcard"
-BOARD_UMS_LUNFILE := "/sys/class/android_usb/android0/f_mass_storage/lun/file"
+#TW_INTERNAL_STORAGE_PATH := "/emmc"
+#TW_INTERNAL_STORAGE_MOUNT_POINT := "emmc"
+#TW_EXTERNAL_STORAGE_PATH := "/sdcard"
+#TW_EXTERNAL_STORAGE_MOUNT_POINT := "sdcard"
+#BOARD_UMS_LUNFILE := "/sys/class/android_usb/android0/f_mass_storage/lun/file"
 #BOARD_UMS_2ND_LUNFILE := "/sys/class/android_usb/android0/f_mass_storage/lun1/file"
 
 # Vold stuff
 BOARD_VOLD_MAX_PARTITIONS := 20
 BOARD_VOLD_EMMC_SHARES_DEV_MAJOR := true
 BOARD_VOLD_DISC_HAS_MULTIPLE_MAJORS := true
-TARGET_USE_CUSTOM_LUN_FILE_PATH = "/sys/class/android_usb/android0/f_mass_storage/lund%d/file"
+TARGET_USE_CUSTOM_LUN_FILE_PATH = "/sys/class/android_usb/android0/f_mass_storage/lun%d/file"
 TARGET_USE_CUSTOM_SECOND_LUN_NUM := 1
 
 #Misc stuff
@@ -124,7 +127,7 @@ WIFI_DRIVER_FW_PATH_AP    := ""
 WIFI_DRIVER_FW_PATH_P2P   := ""
 WIFI_DRIVER_FW_PATH_PARAM := ""
 
-TARGET_CUSTOM_WIFI := device/softwinner/907/libraries/realtek/wlan/wifi_realtek.c
+TARGET_CUSTOM_WIFI := device/softwinner/907/libraries/realtek/wlan/libhardware_legacy/wifi/wifi_realtek.c
 
 # Beware: set only prebuilt OR source+config
 TARGET_KERNEL_SOURCE := kernel/softwinner/907/

@@ -223,6 +223,7 @@ YUVToRGB32(int y, int u, int v)
     rgb.r = YUV2RO(y,u,v) & 0xff;
     rgb.g = YUV2GO(y,u,v) & 0xff;
     rgb.b = YUV2BO(y,u,v) & 0xff;
+    rgb.a = 0xff;
     return rgb.color;
 }
 

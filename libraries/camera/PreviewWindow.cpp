@@ -18,18 +18,53 @@
  * Contains implementation of a class PreviewWindow that encapsulates
  * functionality of a preview window set via set_preview_window camera HAL API.
  */
-
-#define LOG_TAG "PreviewWindow"
 #include "CameraDebug.h"
+#if DBG_PREVIEW
+#define LOG_NDEBUG 0
+#endif
+#define LOG_TAG "PreviewWindow"
+#include <cutils/log.h>
 
 #include <ui/Rect.h>
 #include <ui/GraphicBufferMapper.h>
 #include <type_camera.h>
-#include <hardware/hwcomposer.h>
+#include <hwcomposer.h>
+#include <sunxi_disp_ioctl.h>
+
 #include "V4L2Camera.h"
 #include "PreviewWindow.h"
 
 namespace android {
+
+static void NV12ToNV21(const void* nv12, void* nv21, int width, int height)
+{	
+	char * src_uv = (char *)nv12 + width * height;
+	char * dst_uv = (char *)nv21 + width * height;
+
+	memcpy(nv21, nv12, width * height);
+
+	for(int i = 0; i < width * height / 2; i += 2)
+	{
+		*(dst_uv + i) = *(src_uv + i + 1);
+		*(dst_uv + i + 1) = *(src_uv + i);
+	}
+}
+
+static void NV12ToNV21_shift(const void* nv12, void* nv21, int width, int height)
+{	
+	char * src_uv = (char *)nv12 + width * height;
+	char * dst_uv = (char *)nv21 + width * height;
+
+	memcpy(nv21, nv12, width * height);
+	memcpy(dst_uv, src_uv + 1, width * height / 2 - 1);
+}
+
+DBG_TIME_AVG_BEGIN(TAG_CPY);
+DBG_TIME_AVG_BEGIN(TAG_DQBUF);
+DBG_TIME_AVG_BEGIN(TAG_LCBUF);
+DBG_TIME_AVG_BEGIN(TAG_MAPPER);
+DBG_TIME_AVG_BEGIN(TAG_EQBUF);
+DBG_TIME_AVG_BEGIN(TAG_UNLCUF);
 
 PreviewWindow::PreviewWindow()
     : mPreviewWindow(NULL),
@@ -38,15 +73,21 @@ PreviewWindow::PreviewWindow()
       mPreviewEnabled(false),
       mOverlayFirstFrame(true),
       mShouldAdjustDimensions(true),
+      mLayerShowHW(false),
+      mVideoExit(false),
       mLayerFormat(-1),
-      mScreenID(0)
+      mScreenID(0),
+      mNewCrop(false)
 {
 	F_LOG;
+	memset(&mRectCrop, 0, sizeof(mRectCrop));
 }
 
 PreviewWindow::~PreviewWindow()
 {
 	F_LOG;
+	mPreviewWindow = NULL;
+	mPreviewWindow->perform = NULL;
 }
 
 /****************************************************************************
@@ -56,13 +97,13 @@ PreviewWindow::~PreviewWindow()
 status_t PreviewWindow::setPreviewWindow(struct preview_stream_ops* window,
                                          int preview_fps)
 {
-    ALOGV("%s: current: %p -> new: %p", __FUNCTION__, mPreviewWindow, window);
+    LOGV("%s: current: %p -> new: %p", __FUNCTION__, mPreviewWindow, window);
 	
     status_t res = NO_ERROR;
     Mutex::Autolock locker(&mObjectLock);
 
     /* Reset preview info. */
-    mPreviewFrameWidth = mPreviewFrameHeight = 0;
+//    mPreviewFrameWidth = mPreviewFrameHeight = 0;
 
     if (window != NULL) {
         /* The CPU will write each frame to the preview window buffer.
@@ -72,7 +113,7 @@ status_t PreviewWindow::setPreviewWindow(struct preview_stream_ops* window,
         if (res != NO_ERROR) {
             window = NULL;
             res = -res; // set_usage returns a negative errno.
-            ALOGE("%s: Error setting preview window usage %d -> %s",
+            LOGE("%s: Error setting preview window usage %d -> %s",
                  __FUNCTION__, res, strerror(res));
         }
     }
@@ -83,69 +124,87 @@ status_t PreviewWindow::setPreviewWindow(struct preview_stream_ops* window,
 
 status_t PreviewWindow::startPreview()
 {
-    ALOGV("%s", __FUNCTION__);
+    LOGV("%s", __FUNCTION__);
 
     Mutex::Autolock locker(&mObjectLock);
     mPreviewEnabled = true;
 	mOverlayFirstFrame = true;
+	mVideoExit = false;
 	
+	DBG_TIME_AVG_INIT(TAG_CPY);
+	DBG_TIME_AVG_INIT(TAG_DQBUF);
+	DBG_TIME_AVG_INIT(TAG_LCBUF);
+	DBG_TIME_AVG_INIT(TAG_MAPPER);
+	DBG_TIME_AVG_INIT(TAG_EQBUF);
+	DBG_TIME_AVG_INIT(TAG_UNLCUF);
     return NO_ERROR;
 }
 
 void PreviewWindow::stopPreview()
 {
-    ALOGV("%s", __FUNCTION__);
+    LOGV("%s", __FUNCTION__);
 
     Mutex::Autolock locker(&mObjectLock);
     mPreviewEnabled = false;
 	mOverlayFirstFrame = false;
+
+	DBG_TIME_AVG_END(TAG_CPY, "copy ");
+	DBG_TIME_AVG_END(TAG_DQBUF, "deque ");
+	DBG_TIME_AVG_END(TAG_LCBUF, "lock ");
+	DBG_TIME_AVG_END(TAG_MAPPER, "mapper ");
+	DBG_TIME_AVG_END(TAG_EQBUF, "enque ");
+	DBG_TIME_AVG_END(TAG_UNLCUF, "unlock ");
 }
 
 /****************************************************************************
  * Public API
  ***************************************************************************/
 bool PreviewWindow::onNextFrameAvailable(const void* frame,
+										 int video_fmt,
 										 nsecs_t timestamp,
 										 V4L2Camera* camera_dev,
                                          bool bUseMataData)
 {
 	if (bUseMataData)
 	{
-		return onNextFrameAvailableHW(frame, timestamp, camera_dev);
+		return onNextFrameAvailableHW(frame, video_fmt, timestamp, camera_dev);
 	}
 	else
 	{
-		return onNextFrameAvailableSW(frame, timestamp, camera_dev);
+		return onNextFrameAvailableSW(frame, video_fmt, timestamp, camera_dev);
 	}
 }
 
 bool PreviewWindow::onNextFrameAvailableHW(const void* frame,
+										 int video_fmt,
                                          nsecs_t timestamp,
                                          V4L2Camera* camera_dev)
 {
+#if TO_UPDATA
     int res;
 	V4L2BUF_t * pv4l2_buf = (V4L2BUF_t *)frame;
 	
     Mutex::Autolock locker(&mObjectLock);
 
-	if (!isPreviewEnabled() || mPreviewWindow == NULL) 
+	if (!isPreviewEnabled() || mPreviewWindow == NULL || mVideoExit) 
 	{
         return true;
     }
 	
     /* Make sure that preview window dimensions are OK with the camera device */
-    if (adjustPreviewDimensions(camera_dev) || mShouldAdjustDimensions) 
+    if (adjustPreviewDimensions(pv4l2_buf) || mShouldAdjustDimensions) 
 	{
-        ALOGD("%s: Adjusting preview windows %p geometry to %dx%d",
+        LOGD("%s: Adjusting preview windows %p geometry to %dx%d",
              __FUNCTION__, mPreviewWindow, mPreviewFrameWidth,
              mPreviewFrameHeight);
+		
         res = mPreviewWindow->set_buffers_geometryex(mPreviewWindow,
                                                    mPreviewFrameWidth,
                                                    mPreviewFrameHeight,
                                                    HWC_FORMAT_DEFAULT,
-                                                   0);
+                                                   mScreenID);
         if (res != NO_ERROR) {
-            ALOGE("%s: Error in set_buffers_geometry %d -> %s",
+            LOGE("%s: Error in set_buffers_geometryex %d -> %s",
                  __FUNCTION__, -res, strerror(-res));
 
 			mShouldAdjustDimensions = true;
@@ -154,6 +213,16 @@ bool PreviewWindow::onNextFrameAvailableHW(const void* frame,
 
 		mPreviewWindow->perform(mPreviewWindow, NATIVE_WINDOW_SETPARAMETER, HWC_LAYER_SETFORMAT, mLayerFormat);
 		mShouldAdjustDimensions = false;
+
+		mPreviewWindow->set_crop(mPreviewWindow, 
+			mRectCrop.left, mRectCrop.top, mRectCrop.right, mRectCrop.bottom);
+
+		mNewCrop = false;
+
+		LOGV("first hw: [%d, %d, %d, %d]", mRectCrop.left,
+										mRectCrop.top,
+										mRectCrop.right,
+										mRectCrop.bottom);
     }
 
 	libhwclayerpara_t overlay_para;
@@ -170,7 +239,7 @@ bool PreviewWindow::onNextFrameAvailableHW(const void* frame,
 
 	if (mOverlayFirstFrame)
 	{
-		ALOGD("first frame true");
+		LOGV("first frame true");
 		overlay_para.first_frame_flg = 1;
 		mOverlayFirstFrame = false;
 	}
@@ -179,12 +248,20 @@ bool PreviewWindow::onNextFrameAvailableHW(const void* frame,
 		overlay_para.first_frame_flg = 0;
 	}
 	
-	// ALOGV("addrY: %x, addrC: %x, WXH: %dx%d", overlay_para.top_y, overlay_para.top_c, mPreviewFrameWidth, mPreviewFrameHeight);
+	// LOGV("addrY: %x, addrC: %x, WXH: %dx%d", overlay_para.top_y, overlay_para.top_c, mPreviewFrameWidth, mPreviewFrameHeight);
+
+	if (mNewCrop)
+	{
+		mPreviewWindow->set_crop(mPreviewWindow, 
+			mRectCrop.left, mRectCrop.top, mRectCrop.right, mRectCrop.bottom);
+
+		mNewCrop = false;
+	}
 
 	res = mPreviewWindow->perform(mPreviewWindow, NATIVE_WINDOW_SETPARAMETER, HWC_LAYER_SETFRAMEPARA, (uint32_t)&overlay_para);
 	if (res != OK)
 	{
-		ALOGE("NATIVE_WINDOW_SETPARAMETER failed");
+		LOGE("NATIVE_WINDOW_SETPARAMETER failed");
 		return false;
 	}
 
@@ -192,18 +269,21 @@ bool PreviewWindow::onNextFrameAvailableHW(const void* frame,
 	{
 		showLayer(true);
 	}
-
+#endif // TO_UPDATA
 	return true;
 }
 
 bool PreviewWindow::onNextFrameAvailableSW(const void* frame,
+										 int video_fmt,
                                          nsecs_t timestamp,
                                          V4L2Camera* camera_dev)
 {
     int res;
     Mutex::Autolock locker(&mObjectLock);
 
-	// ALOGD("%s, timestamp: %lld", __FUNCTION__, timestamp);
+	V4L2BUF_t * pv4l2_buf = (V4L2BUF_t *)frame;
+
+	// LOGD("%s, timestamp: %lld", __FUNCTION__, timestamp);
 
     if (!isPreviewEnabled() || mPreviewWindow == NULL) 
 	{
@@ -215,45 +295,84 @@ bool PreviewWindow::onNextFrameAvailableSW(const void* frame,
         /* Need to set / adjust buffer geometry for the preview window.
          * Note that in the emulator preview window uses only RGB for pixel
          * formats. */
-        ALOGD("%s: Adjusting preview windows %p geometry to %dx%d",
+        LOGD("%s: Adjusting preview windows %p geometry to %dx%d",
              __FUNCTION__, mPreviewWindow, mPreviewFrameWidth,
              mPreviewFrameHeight);
+		
+		int format = HAL_PIXEL_FORMAT_YCrCb_420_SP;
+		LOGV("preview format: HAL_PIXEL_FORMAT_YCrCb_420_SP");
+
         res = mPreviewWindow->set_buffers_geometry(mPreviewWindow,
                                                    mPreviewFrameWidth,
                                                    mPreviewFrameHeight,
-                                                   HAL_PIXEL_FORMAT_RGBA_8888);
+												   format);
         if (res != NO_ERROR) {
-            ALOGE("%s: Error in set_buffers_geometry %d -> %s",
+            LOGE("%s: Error in set_buffers_geometry %d -> %s",
                  __FUNCTION__, -res, strerror(-res));
             // return false;
         }
 		mShouldAdjustDimensions = false;
+
+		res = mPreviewWindow->set_buffer_count(mPreviewWindow, 3);
+		if (res != 0) 
+		{
+	        LOGE("native_window_set_buffer_count failed: %s (%d)", strerror(-res), -res);
+
+	        if ( ENODEV == res ) {
+	            LOGE("Preview surface abandoned!");
+	            mPreviewWindow = NULL;
+	        }
+
+	        return false;
+	    }
+
+		mPreviewWindow->set_crop(mPreviewWindow, 
+			mRectCrop.left, mRectCrop.top, mRectCrop.right, mRectCrop.bottom);
+
+		mNewCrop = false;
+
+		LOGV("first sw: [%d, %d, %d, %d]", mRectCrop.left,
+										mRectCrop.top,
+										mRectCrop.right,
+										mRectCrop.bottom);
     }
 
     /*
      * Push new frame to the preview window.
      */
+		
+	DBG_TIME_AVG_AREA_IN(TAG_DQBUF);
 
     /* Dequeue preview window buffer for the frame. */
     buffer_handle_t* buffer = NULL;
     int stride = 0;
     res = mPreviewWindow->dequeue_buffer(mPreviewWindow, &buffer, &stride);
     if (res != NO_ERROR || buffer == NULL) {
-        ALOGE("%s: Unable to dequeue preview window buffer: %d -> %s",
+        LOGE("%s: Unable to dequeue preview window buffer: %d -> %s",
             __FUNCTION__, -res, strerror(-res));
-         stopPreview();
+
+		int undequeued = 0;
+		mPreviewWindow->get_min_undequeued_buffer_count(mPreviewWindow, &undequeued);
+		LOGW("now undequeued: %d", undequeued);
+		
         return false;
     }
+	DBG_TIME_AVG_AREA_OUT(TAG_DQBUF);
+
+	DBG_TIME_AVG_AREA_IN(TAG_LCBUF);
 
     /* Let the preview window to lock the buffer. */
     res = mPreviewWindow->lock_buffer(mPreviewWindow, buffer);
     if (res != NO_ERROR) {
-        ALOGE("%s: Unable to lock preview window buffer: %d -> %s",
+        LOGE("%s: Unable to lock preview window buffer: %d -> %s",
              __FUNCTION__, -res, strerror(-res));
         mPreviewWindow->cancel_buffer(mPreviewWindow, buffer);
         return false;
     }
-
+	DBG_TIME_AVG_AREA_OUT(TAG_LCBUF);
+	
+	DBG_TIME_AVG_AREA_IN(TAG_MAPPER);
+	
     /* Now let the graphics framework to lock the buffer, and provide
      * us with the framebuffer data address. */
     void* img = NULL;
@@ -261,23 +380,47 @@ bool PreviewWindow::onNextFrameAvailableSW(const void* frame,
     GraphicBufferMapper& grbuffer_mapper(GraphicBufferMapper::get());
     res = grbuffer_mapper.lock(*buffer, GRALLOC_USAGE_SW_WRITE_OFTEN, rect, &img);
     if (res != NO_ERROR) {
-        ALOGE("%s: grbuffer_mapper.lock failure: %d -> %s",
+        LOGE("%s: grbuffer_mapper.lock failure: %d -> %s",
              __FUNCTION__, res, strerror(res));
         mPreviewWindow->cancel_buffer(mPreviewWindow, buffer);
         return false;
     }
 
-    /* Frames come in in YV12/NV12/NV21 format. Since preview window doesn't
-     * supports those formats, we need to obtain the frame in RGB565. */
-    res = camera_dev->getCurrentPreviewFrame(img);
-    if (res == NO_ERROR) {
-        /* Show it. */
-        mPreviewWindow->enqueue_buffer(mPreviewWindow, buffer);
-    } else {
-        ALOGE("%s: Unable to obtain preview frame: %d", __FUNCTION__, res);
-        mPreviewWindow->cancel_buffer(mPreviewWindow, buffer);
-    }
+	DBG_TIME_AVG_AREA_OUT(TAG_MAPPER);
+
+	if (mNewCrop)
+	{
+		mPreviewWindow->set_crop(mPreviewWindow, 
+			mRectCrop.left, mRectCrop.top, mRectCrop.right, mRectCrop.bottom);
+
+		mNewCrop = false;
+	}
+	
+	DBG_TIME_AVG_AREA_IN(TAG_CPY);
+
+	if (pv4l2_buf->format == V4L2_PIX_FMT_NV21)
+	{
+		memcpy(img, (void*)pv4l2_buf->addrVirY, mPreviewFrameWidth * mPreviewFrameHeight * 3/2);
+	}
+	else
+	{
+		NV12ToNV21_shift((void*)pv4l2_buf->addrVirY, img, mPreviewFrameWidth, mPreviewFrameHeight);
+	}
+
+	DBG_TIME_AVG_AREA_OUT(TAG_CPY);
+
+	DBG_TIME_AVG_AREA_IN(TAG_EQBUF);
+
+	mPreviewWindow->set_timestamp(mPreviewWindow, pv4l2_buf->timeStamp);
+	mPreviewWindow->enqueue_buffer(mPreviewWindow, buffer);
+
+	DBG_TIME_AVG_AREA_OUT(TAG_EQBUF);
+
+	DBG_TIME_AVG_AREA_IN(TAG_UNLCUF);
+
     grbuffer_mapper.unlock(*buffer);
+
+	DBG_TIME_AVG_AREA_OUT(TAG_UNLCUF);
 
 	return true;
 }
@@ -296,6 +439,8 @@ bool PreviewWindow::adjustPreviewDimensions(V4L2Camera* camera_dev)
         return false;
     }
 
+	LOGV("cru: [%d, %d], get: [%d, %d]", mPreviewFrameWidth, mPreviewFrameHeight,
+		camera_dev->getFrameWidth(), camera_dev->getFrameHeight());
     /* They don't match: adjust the cache. */
     mPreviewFrameWidth = camera_dev->getFrameWidth();
     mPreviewFrameHeight = camera_dev->getFrameHeight();
@@ -304,20 +449,45 @@ bool PreviewWindow::adjustPreviewDimensions(V4L2Camera* camera_dev)
     return true;
 }
 
-int PreviewWindow::showLayer(bool on)
+bool PreviewWindow::adjustPreviewDimensions(V4L2BUF_t* pbuf)
 {
-	ALOGV("%s, %s", __FUNCTION__, on ? "on" : "off");
-	mLayerShowHW = on ? 1 : 0;
-	if (mPreviewWindow != NULL)
+	// F_LOG;
+    /* Match the cached frame dimensions against the actual ones. */
+    if ((mPreviewFrameWidth == pbuf->width) &&
+        (mPreviewFrameHeight == pbuf->height)) {
+        /* They match. */
+        return false;
+    }
+
+	LOGV("cru: [%d, %d], get: [%d, %d]", mPreviewFrameWidth, mPreviewFrameHeight,
+		pbuf->width, pbuf->height);
+    /* They don't match: adjust the cache. */
+    mPreviewFrameWidth = pbuf->width;
+    mPreviewFrameHeight = pbuf->height;
+
+	mShouldAdjustDimensions = false;
+    return true;
+}
+
+
+int PreviewWindow::showLayer(bool on, bool video_exit)
+{
+	//Mutex::Autolock locker(&mObjectLock);
+#if TO_UPDATA
+	LOGV("%s, %s", __FUNCTION__, on ? "on" : "off");
+	if (mPreviewWindow != NULL && mPreviewWindow->perform != NULL)
 	{
+		mLayerShowHW = on ? 1 : 0;
+		mVideoExit = video_exit;
 		mPreviewWindow->perform(mPreviewWindow, NATIVE_WINDOW_SETPARAMETER, HWC_LAYER_SHOW, mLayerShowHW);
 	}
+#endif // TO_UPDATA
 	return OK;
 }
 
 int PreviewWindow::setLayerFormat(int fmt)
 {
-	ALOGV("%s, %d", __FUNCTION__, fmt);
+	LOGV("%s, %d", __FUNCTION__, fmt);
 	mLayerFormat = fmt;	
 	mShouldAdjustDimensions = true;
 	return OK;
@@ -325,12 +495,14 @@ int PreviewWindow::setLayerFormat(int fmt)
 
 int PreviewWindow::setScreenID(int id)
 {
-	ALOGV("%s, id: %d", __FUNCTION__, id);
+#if TO_UPDATA
+	LOGV("%s, id: %d", __FUNCTION__, id);
 	mScreenID = id;
-	if (mPreviewWindow != NULL)
+	if (mPreviewWindow != NULL && mPreviewWindow->perform != NULL)
 	{
-		mPreviewWindow->perform(mPreviewWindow, NATIVE_WINDOW_SETPARAMETER, HWC_LAYER_SETSCREEN, mScreenID);
+		mPreviewWindow->perform(mPreviewWindow, NATIVE_WINDOW_SETPARAMETER, HWC_LAYER_SETMODE, mScreenID);
 	}
+#endif // TO_UPDATA
 	return OK;
 }
 
